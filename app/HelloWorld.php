@@ -11,7 +11,7 @@ class HelloWorld
 	
 	function announce(): void
 	{
-		echo 'hello,autoloaded world';
+		echo 'hello,autoloaded world,test.';
 	}
 
 
