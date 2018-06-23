@@ -2,6 +2,9 @@
 
 namespace sdk\libs;
 
+use Closure;
+use LogicException;
+use PDOException;
 use sdk\config\Config;
 use PDO;
 use Katzgrau\KLogger\Logger;
@@ -14,8 +17,7 @@ use InvalidArgumentException;
  * @author  chenwei
  * @package common_lib
  */
-class NewMysqlHelper extends Singleton
-{
+class NewMysqlHelper extends Singleton {
 
 	/**
 	 * The default PDO connection options.
@@ -23,7 +25,7 @@ class NewMysqlHelper extends Singleton
 	 */
 	protected $options = [
 		PDO::ATTR_TIMEOUT    => 10,
-		PDO::ATTR_PERSISTENT => true,
+		PDO::ATTR_PERSISTENT => true,  // 建立pdo持久链接
 		PDO::ATTR_ERRMODE    => PDO::ERRMODE_EXCEPTION,
 		PDO::ATTR_AUTOCOMMIT => 1,
 	];
@@ -45,6 +47,16 @@ class NewMysqlHelper extends Singleton
 	public $defaultConnection = 'mysql';
 
 	/**
+	 * @var string
+	 */
+	public $presentConnection = 'mysql';
+
+	/**
+	 * @var
+	 */
+	protected $reconnector;
+
+	/**
 	 * mysql 最后连接时间，对于长连接需要考虑超时的问题
 	 * @var int
 	 */
@@ -55,10 +67,6 @@ class NewMysqlHelper extends Singleton
 	 */
 	private $logger;
 
-	/**
-	 * @var int
-	 */
-	private $cur_use_master = 1;// 1当前使用主进行操作 0 当前使用从进行操作
 	/**
 	 * @var int
 	 */
@@ -73,8 +81,7 @@ class NewMysqlHelper extends Singleton
 	 * todo 事物机制不可用
 	 * todo 主从机制的实现
 	 */
-	function __construct ()
-	{
+	function __construct () {
 
 	}
 
@@ -84,16 +91,14 @@ class NewMysqlHelper extends Singleton
 	 * @throws \Exception
 	 * @throws \Throwable
 	 */
-	public function selectDB ($db)
-	{
+	public function selectDB ($db) {
 		$this->query("use $db;");
 	}
 
 	/**
 	 * @return array
 	 */
-	public function getAllConnections ()
-	{
+	public function getAllConnections () {
 		return $this->connections;
 	}
 
@@ -101,9 +106,8 @@ class NewMysqlHelper extends Singleton
 	 * @param       $sql
 	 * @param array $vars
 	 */
-	private function addSqlLog ($sql, $vars = [])
-	{
-		if (count($this->sql_log) > 50) {
+	private function addSqlLog ($sql, $vars = []) {
+		if(count($this->sql_log) > 50) {
 			array_shift($this->sql_log);
 		}
 		array_push($this->sql_log, [$sql, $vars]);
@@ -112,8 +116,7 @@ class NewMysqlHelper extends Singleton
 	/**
 	 * @return array
 	 */
-	public function getSqlLog ()
-	{
+	public function getSqlLog () {
 		return $this->sql_log;
 	}
 
@@ -127,8 +130,7 @@ class NewMysqlHelper extends Singleton
 	 * @return int
 	 * @throws \Throwable
 	 */
-	public function getRows ($sql, array $input_parameters = [])
-	{
+	public function getRows ($sql, array $input_parameters = []) {
 		try {
 			$PDOStatement = $this->connection()->pdo->prepare($sql);
 			$PDOStatement->execute($input_parameters);
@@ -149,8 +151,7 @@ class NewMysqlHelper extends Singleton
 	 * @return number
 	 * @throws \Throwable
 	 */
-	private function query ($sql, array $input_parameters = [])
-	{
+	private function query ($sql, array $input_parameters = []) {
 		try {
 			$this->addSqlLog($sql, $input_parameters);
 			$PDOStatement = $this->connection()->pdo->prepare($sql);
@@ -175,9 +176,8 @@ class NewMysqlHelper extends Singleton
 	 * @return number|string
 	 * @throws \Throwable
 	 */
-	public function insert ($sql, $lastid = 0, array $input_parameters = [])
-	{
-		if ($lastid == 1) {
+	public function insert ($sql, $lastid = 0, array $input_parameters = []) {
+		if($lastid == 1) {
 			$this->query($sql, $input_parameters);
 
 			return $id = $this->connection()->pdo->lastinsertid();
@@ -195,9 +195,8 @@ class NewMysqlHelper extends Singleton
 	 * @return bool|number [type]        [description]
 	 * @throws \Throwable
 	 */
-	public function insertAtrr ($table, array $data)
-	{
-		if (empty($data)) {
+	public function insertAtrr ($table, array $data) {
+		if(empty($data)) {
 			return false;
 		}
 		$sql          = "describe $table";
@@ -207,7 +206,7 @@ class NewMysqlHelper extends Singleton
 		$params       = [];
 		foreach ($data as $key => $val) {
 			foreach ($filed_list as $row) {
-				if ($row['Field'] == $key) {
+				if($row['Field'] == $key) {
 					$params[ ":_PRE_" . $key ] = $val;
 					$field_string              .= ',`' . $key . '`';
 					$value_string              .= ', :_PRE_' . $key;
@@ -216,7 +215,7 @@ class NewMysqlHelper extends Singleton
 		}
 		$field_string = trim($field_string, ',');
 		$value_string = trim($value_string, ',');
-		if (empty($field_string) || empty($value_string) || empty($params)) {
+		if(empty($field_string) || empty($value_string) || empty($params)) {
 			return false;
 		}
 		$sql = "insert into $table ($field_string) values($value_string)";
@@ -236,9 +235,8 @@ class NewMysqlHelper extends Singleton
 	 * @return bool|number [type]        [description]
 	 * @throws \Throwable
 	 */
-	public function updateAtrr ($table, $data, $condition = '', $input_parameters = [])
-	{
-		if (empty($data)) {
+	public function updateAtrr ($table, $data, $condition = '', $input_parameters = []) {
+		if(empty($data)) {
 			return false;
 		}
 		$sql          = "describe $table";
@@ -248,8 +246,8 @@ class NewMysqlHelper extends Singleton
 		$params       = [];
 		foreach ($data as $key => $val) {
 			foreach ($filed_list as $row) {
-				if ($row['Field'] == $key) {
-					if ($row['Key'] == 'PRI' && !$condition) {
+				if($row['Field'] == $key) {
+					if($row['Key'] == 'PRI' && !$condition) {
 						$where_string              = "`{$key}` = :_PRE_{$key}";
 						$params[ ":_PRE_" . $key ] = $val;
 					} else {
@@ -260,11 +258,11 @@ class NewMysqlHelper extends Singleton
 			}
 		}
 		$set_string = trim($set_string, ',');
-		if ($condition) {
+		if($condition) {
 			$where_string = $condition;
 			$params       = array_merge($params, $input_parameters);
 		}
-		if (empty($set_string) || empty($where_string) || empty($params)) {
+		if(empty($set_string) || empty($where_string) || empty($params)) {
 			return false;
 		}
 		$sql = "update {$table} set {$set_string} where {$where_string} limit 1";
@@ -281,8 +279,7 @@ class NewMysqlHelper extends Singleton
 	 * @return number
 	 * @throws \Throwable
 	 */
-	public function update ($sql, array $input_parameters = [])
-	{
+	public function update ($sql, array $input_parameters = []) {
 		return $this->query($sql, $input_parameters);
 	}
 
@@ -293,8 +290,7 @@ class NewMysqlHelper extends Singleton
 	 * @return number
 	 * @throws \Throwable
 	 */
-	public function delete ($sql, array $input_parameters = [])
-	{
+	public function delete ($sql, array $input_parameters = []) {
 		return $this->query($sql, $input_parameters);
 	}
 
@@ -306,8 +302,7 @@ class NewMysqlHelper extends Singleton
 	 * @return number
 	 * @throws \Throwable
 	 */
-	public function createTable ($sql)
-	{
+	public function createTable ($sql) {
 		return $this->query($sql);
 	}
 
@@ -320,9 +315,8 @@ class NewMysqlHelper extends Singleton
 	 * @return array
 	 * @throws \Throwable
 	 */
-	public function getOne ($sql, array $input_parameters = [])
-	{
-		if (!preg_match("/limit/i", $sql)) {
+	public function getOne ($sql, array $input_parameters = []) {
+		if(!preg_match("/limit/i", $sql)) {
 			$sql = preg_replace("/[,;]$/i", '', trim($sql)) . " limit 1 ";
 		}
 
@@ -351,8 +345,7 @@ class NewMysqlHelper extends Singleton
 	 * @return array
 	 * @throws \Throwable
 	 */
-	public function getAll ($sql, array $input_parameters = [])
-	{
+	public function getAll ($sql, array $input_parameters = []) {
 		try {
 			$PDOStatement = $this->connection()->pdo->prepare($sql);
 			$PDOStatement->execute($input_parameters);
@@ -369,15 +362,13 @@ class NewMysqlHelper extends Singleton
 
 	/**
 	 * 获取最后插入的id
-	 *
 	 * @return null|string
 	 * @throws \Throwable
 	 */
-	public function getLastId ()
-	{
+	public function getLastId () {
 		$id = $this->connection()->pdo->lastInsertId();
 
-		if (!empty($id)) {
+		if(!empty($id)) {
 			return $id;
 		}
 
@@ -388,8 +379,7 @@ class NewMysqlHelper extends Singleton
 	 * Get the default connection name.
 	 * @return string
 	 */
-	public function getDefaultConnection ()
-	{
+	public function getDefaultConnection () {
 		return $this->defaultConnection;
 	}
 
@@ -401,12 +391,13 @@ class NewMysqlHelper extends Singleton
 	 * @return \sdk\libs\NewMysqlHelper
 	 * @throws \Throwable
 	 */
-	public function connection ($name = null)
-	{
+	public function connection ($name = null) {
 		$name = $name ? : $this->getDefaultConnection();
 
+		$this->setPresentConnection($name);
+
 		// 如果该连接未创建，取其配置创建
-		if (!isset($this->connections[ $name ])) {
+		if(!isset($this->connections[ $name ])) {
 			$this->connections[ $name ] = $this->configure(
 				$this->makeConnection($name)
 			);
@@ -422,8 +413,7 @@ class NewMysqlHelper extends Singleton
 	 *
 	 * @return \sdk\libs\NewMysqlHelper
 	 */
-	protected function configure (PDO $connection)
-	{
+	protected function configure (PDO $connection) {
 
 		$this->pdo = $connection;
 
@@ -441,17 +431,36 @@ class NewMysqlHelper extends Singleton
 	}
 
 	/**
-	 * Set the reconnect instance on the connection.
-	 *
-	 * @param  callable $reconnector
-	 *
-	 * @return $this
+	 * @return string
 	 */
-	public function setReconnector (callable $reconnector)
-	{
+	public function getPresentConnection (): string {
+		return $this->presentConnection;
+	}
+
+	/**
+	 * @param string $presentConnection
+	 */
+	public function setPresentConnection (string $presentConnection): void {
+		$this->presentConnection = $presentConnection;
+	}
+
+	/**
+	 * @param mixed $reconnector
+	 *
+	 * @return \sdk\libs\NewMysqlHelper
+	 */
+	public function setReconnector (callable $reconnector): \sdk\libs\NewMysqlHelper {
 		$this->reconnector = $reconnector;
 
 		return $this;
+	}
+
+	public function reconnect () {
+		if(is_callable($this->reconnector)) {
+			return call_user_func($this->reconnector, $this);
+		}
+
+		throw new LogicException('Lost connection and no reconnector available.');
 	}
 
 	/**
@@ -462,8 +471,7 @@ class NewMysqlHelper extends Singleton
 	 * @return \PDO
 	 * @throws \Throwable
 	 */
-	protected function makeConnection ($name)
-	{
+	protected function makeConnection ($name) {
 		$config = $this->configuration($name);
 
 		return $connector = $this->connect($config);
@@ -478,23 +486,22 @@ class NewMysqlHelper extends Singleton
 	 * @throws \InvalidArgumentException
 	 * @throws \Exception
 	 */
-	protected function configuration ($name)
-	{
+	protected function configuration ($name) {
 		$name = $name ? : $this->getDefaultConnection();
 
 		// 从配置文件中读取相应的配置
 		// todo 配置文件加载机制
 		// todo 校验配置文件是否有误
-		$connections = Config::load_config_file(
+		$configs = Config::load_config_file(
 			CONFIG_FILE,
 			"can't find config file!!! filename:" . CONFIG_FILE
 		);
 
-		if (array_key_exists($name, $connections)) {
+		if(!array_key_exists($name, $configs)) {
 			throw new InvalidArgumentException("Database [{$name}] not configured.");
 		}
 
-		return $connections[ $name ];
+		return $configs[ $name ];
 	}
 
 	/**
@@ -503,15 +510,14 @@ class NewMysqlHelper extends Singleton
 	 * @return \PDO
 	 * @throws \Throwable
 	 */
-	private function connect (array $config)
-	{
+	private function connect (array $config) {
 		$host = $config['host'] ?? null;
 
 		$dsn = isset($port) ? "mysql:host={$host};port={$port};" : "mysql:host={$host}";
 
 		$this->createConnection($dsn, $config);
 
-		if (!empty($config['database'])) {
+		if(!empty($config['database'])) {
 			$this->selectDB($config['database']);
 		}
 
@@ -533,26 +539,40 @@ class NewMysqlHelper extends Singleton
 	 * @return void
 	 * @throws \Throwable
 	 */
-	private function createConnection ($dsn, array $config)
-	{
+	private function createConnection ($dsn, array $config) {
 		list($username, $password) = [
 			$config['username'] ?? null, $config['password'] ?? null,
 		];
 
 		$options = $this->getOptions();
 
+		// todo pdo 重连机制 返回值问题
 		try {
-			$this->connection        = @new PDO($dsn, $username, $password, $options);
-			$info                    = [
-				$dsn, $username, $password, $this->options, time(),
-			];
-			$this->connection->info  = $info;
-			$this->last_connect_time = time();
-		} catch (\PDOException $e) {
-			$this->tryAgainIfCausedByLostConnection(
-				$e, $dsn, $config
+			$this->connection = $this->createPdoConnection($dsn, $username, $password, $options);
+		} catch (Exception $e) {
+			$this->connection = $this->tryAgainIfCausedByLostConnection(
+				$e, $dsn, $username, $password, $config
 			);
 		}
+
+		$info = [
+			$dsn, $username, $password, $this->options, time(),
+		];
+
+		$this->connection->info  = $info;
+		$this->last_connect_time = time();
+	}
+
+	/**
+	 * @param $dsn
+	 * @param $username
+	 * @param $password
+	 * @param $options
+	 *
+	 * @return \PDO
+	 */
+	protected function createPdoConnection ($dsn, $username, $password, $options) {
+		return new PDO($dsn, $username, $password, $options);
 	}
 
 	/**
@@ -560,24 +580,59 @@ class NewMysqlHelper extends Singleton
 	 *
 	 * @param  \Throwable $e
 	 * @param  string     $dsn
+	 * @param             $username
+	 * @param             $password
 	 * @param array       $config
 	 *
-	 * @return void
+	 * @return \PDO
 	 * @throws \Throwable
 	 */
-	private function tryAgainIfCausedByLostConnection (Throwable $e, $dsn, array $config)
-	{
+	private function tryAgainIfCausedByLostConnection (Throwable $e, $dsn, $username, $password, array $config) {
 		$log_path     = SDK_PATH . "/../log/sql/" . PJNAME . '/';
 		$this->logger = new Logger($log_path, Config::logLevel());
 		$this->logger->error("connect error:" . $dsn . "\terror" . $e->getCode() . ":" . $e->getMessage());
 
-		if (stripos($e->getMessage(), 'server has gone away') !== false) {
-			$this->createConnection($dsn, $config);
-
-			return;
+		// 如果连接断掉，尝试重连
+		if($this->causedByLostConnection($e)) {
+			return $this->createPDOConnection($dsn, $username, $password, $config);
 		}
 
 		throw $e;
+	}
+
+	/**
+	 * Determine if the given exception was caused by a lost connection.
+	 *
+	 * @param  \Throwable $e
+	 *
+	 * @return bool
+	 */
+	private function causedByLostConnection ($e) {
+		$messages = [
+			'server has gone away',
+			'no connection to the server',
+			'Lost connection',
+			'is dead or not enabled',
+			'Error while sending',
+			'decryption failed or bad record mac',
+			'server closed the connection unexpectedly',
+			'SSL connection has been closed unexpectedly',
+			'Error writing data to the connection',
+			'Resource deadlock avoided',
+			'Transaction() on null',
+			'child connection forced to terminate due to client_idle_limit',
+			'query_wait_timeout',
+			'reset by peer',
+		];
+
+		$haystack = $e->getMessage();
+		foreach ($messages as $message) {
+			if($message !== '' && mb_strpos($haystack, $message) !== false) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -587,9 +642,8 @@ class NewMysqlHelper extends Singleton
 	 *
 	 * @return \PDO |void
 	 */
-	protected function configureEncoding (array $config)
-	{
-		if (!isset($config['charset'])) {
+	protected function configureEncoding (array $config) {
+		if(!isset($config['charset'])) {
 			return;
 		}
 
@@ -606,10 +660,11 @@ class NewMysqlHelper extends Singleton
 	 *
 	 * @return void
 	 */
-	protected function configureTimezone (array $config)
-	{
-		if (isset($config['timezone'])) {
-			$this->pdo->prepare('set time_zone="' . $config['timezone'] . '"')->execute();
+	protected function configureTimezone (array $config) {
+		if(isset($config['timezone'])) {
+			$this->pdo->prepare(
+				'set time_zone="' . $config['timezone'] . '"'
+			)->execute();
 		}
 	}
 
@@ -617,8 +672,7 @@ class NewMysqlHelper extends Singleton
 	 * Get the default PDO connection options.
 	 * @return array
 	 */
-	public function getOptions ()
-	{
+	public function getOptions () {
 		return $this->options;
 	}
 
@@ -629,28 +683,34 @@ class NewMysqlHelper extends Singleton
 	 *
 	 * @return void
 	 */
-	public function setOptions (array $options)
-	{
+	public function setOptions (array $options) {
 		$this->options = $options;
 	}
 
 	/**
-	 * 开启所有操作都从master走
-	 * 一定要在执行完后运行 disableAllMaster
-	 * @return void
+	 * Run a SQL statement and log its execution context.
+	 *
+	 * @param  string   $query
+	 * @param  array    $bindings
+	 * @param  \Closure $callback
+	 *
+	 * @return mixed
+	 * @throws
 	 */
-	public function enableAllMaster ()
-	{
-		$this->all_use_master = 1;
-	}
+	protected function run ($query, $bindings, Closure $callback) {
+		if(is_null($this->pdo)) {
+			$this->connection($this->presentConnection);
+		}
 
-	/**
-	 * 禁用　所有操作都从master走，回到正常的读写分离模式
-	 * @return void
-	 */
-	public function disableAllMaster ()
-	{
-		$this->all_use_master = 0;
+		try {
+			$result = $callback($query, $bindings);
+		} catch (Exception $e) {
+			$this->runAgainIfCausedByLostConnection(
+				$e, $dsn, $username, $password, $config
+			);
+		}
+
+		return $result;
 	}
 
 	/**
@@ -658,8 +718,7 @@ class NewMysqlHelper extends Singleton
 	 * @return bool
 	 * @throws \Exception
 	 */
-	public function beginTransaction ()
-	{
+	public function beginTransaction () {
 		$this->all_use_master = 1;//开启事务的全走master
 		$this->connection->beginTransaction();
 		$this->connection->setAttribute(PDO::ATTR_AUTOCOMMIT, 0);
@@ -670,8 +729,7 @@ class NewMysqlHelper extends Singleton
 	/**
 	 * 提交事务  注意此处会隐式调用disableAllMaster
 	 */
-	public function commit ()
-	{
+	public function commit () {
 		$this->connection->commit();
 		$this->connection->setAttribute(PDO::ATTR_AUTOCOMMIT, 1);
 
@@ -687,10 +745,9 @@ class NewMysqlHelper extends Singleton
 	 *
 	 * @return bool
 	 */
-	public function rollback ($connection = "")
-	{
+	public function rollback ($connection = "") {
 		$tmp_connection = $this->connection;
-		if (!empty($connection)) {
+		if(!empty($connection)) {
 			$this->connection = $connection;
 		}
 
@@ -711,8 +768,7 @@ class NewMysqlHelper extends Singleton
 	 * @throws Exception
 	 * @return mixed result of callback function
 	 */
-	public function transaction (callable $callback)
-	{
+	public function transaction (callable $callback) {
 		$this->beginTransaction();
 		try {
 			$result = call_user_func($callback, $this);
@@ -728,8 +784,7 @@ class NewMysqlHelper extends Singleton
 	/**
 	 * @param string $defaultConnection
 	 */
-	public function setDefaultConnection (string $defaultConnection): void
-	{
+	public function setDefaultConnection (string $defaultConnection): void {
 		$this->defaultConnection = $defaultConnection;
 	}
 
